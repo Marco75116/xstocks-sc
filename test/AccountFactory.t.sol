@@ -32,48 +32,67 @@ contract AccountFactoryTest is Test {
     // ─── Factory tests ───────────────────────────────────────────────────────
 
     function test_createAccount() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
 
         assertNotEq(account, address(0));
-        assertEq(factory.accountOf(userEOA), account);
-        assertTrue(factory.hasAccount(userEOA));
+        assertEq(factory.accountOf(userEOA, 0), account);
+        assertTrue(factory.hasAccount(userEOA, 0));
     }
 
     function test_createAccount_emitsEvent() public {
         vm.expectEmit(true, true, true, true);
-        address predicted = factory.predictAddress(userEOA);
-        emit AccountFactory.AccountCreated(predicted, userEOA, operator);
+        address predicted = factory.predictAddress(userEOA, 0);
+        emit AccountFactory.AccountCreated(predicted, userEOA, operator, 0);
 
-        factory.createAccount(userEOA);
+        factory.createAccount(userEOA, 0);
     }
 
-    function test_createAccount_revertsDuplicate() public {
-        address account = factory.createAccount(userEOA);
+    function test_createAccount_revertsDuplicateSalt() public {
+        address account = factory.createAccount(userEOA, 0);
 
         vm.expectRevert(abi.encodeWithSelector(AccountFactory.AlreadyDeployed.selector, account));
-        factory.createAccount(userEOA);
+        factory.createAccount(userEOA, 0);
+    }
+
+    function test_createAccount_multiplePerUser() public {
+        address account0 = factory.createAccount(userEOA, 0);
+        address account1 = factory.createAccount(userEOA, 1);
+        address account2 = factory.createAccount(userEOA, 2);
+
+        assertNotEq(account0, account1);
+        assertNotEq(account1, account2);
+        assertEq(factory.accountOf(userEOA, 0), account0);
+        assertEq(factory.accountOf(userEOA, 1), account1);
+        assertEq(factory.accountOf(userEOA, 2), account2);
     }
 
     function test_createAccount_revertsZeroAddress() public {
         vm.expectRevert(AccountFactory.ZeroAddress.selector);
-        factory.createAccount(address(0));
+        factory.createAccount(address(0), 0);
     }
 
     function test_predictAddress_matchesActual() public {
-        address predicted = factory.predictAddress(userEOA);
-        address actual = factory.createAccount(userEOA);
+        address predicted = factory.predictAddress(userEOA, 0);
+        address actual = factory.createAccount(userEOA, 0);
+
+        assertEq(predicted, actual);
+    }
+
+    function test_predictAddress_matchesActualWithSalt() public {
+        address predicted = factory.predictAddress(userEOA, 3);
+        address actual = factory.createAccount(userEOA, 3);
 
         assertEq(predicted, actual);
     }
 
     function test_hasAccount_falseBeforeCreate() public view {
-        assertFalse(factory.hasAccount(userEOA));
+        assertFalse(factory.hasAccount(userEOA, 0));
     }
 
     // ─── UserAccount: ERC-1271 ───────────────────────────────────────────────
 
     function test_isValidSignature_operator() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         UserAccount ua = UserAccount(payable(account));
 
         bytes32 hash = keccak256("test order");
@@ -84,7 +103,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_isValidSignature_owner() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         UserAccount ua = UserAccount(payable(account));
 
         bytes32 hash = keccak256("test order");
@@ -95,7 +114,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_isValidSignature_invalidSigner() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         UserAccount ua = UserAccount(payable(account));
 
         (, uint256 randomKey) = makeAddrAndKey("random");
@@ -109,7 +128,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: withdraw ───────────────────────────────────────────────
 
     function test_withdraw() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
 
         // Fund the account with mock USDC
         deal(usdc, account, 1000e6);
@@ -122,7 +141,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_withdraw_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         deal(usdc, account, 1000e6);
 
         vm.prank(operator);
@@ -133,7 +152,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: withdrawEth ────────────────────────────────────────────
 
     function test_withdrawEth() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         vm.deal(account, 1 ether);
 
         uint256 balBefore = userEOA.balance;
@@ -145,7 +164,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_withdrawEth_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         vm.deal(account, 1 ether);
 
         vm.prank(operator);
@@ -156,7 +175,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: setOperator ────────────────────────────────────────────
 
     function test_setOperator() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         address newOp = makeAddr("newOperator");
 
         vm.prank(userEOA);
@@ -166,7 +185,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_setOperator_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
 
         vm.prank(operator);
         vm.expectRevert(UserAccount.OnlyOwner.selector);
@@ -174,7 +193,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_setOperator_revertsZeroAddress() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
 
         vm.prank(userEOA);
         vm.expectRevert(UserAccount.ZeroAddress.selector);
@@ -184,7 +203,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: approveSpender ─────────────────────────────────────────
 
     function test_approveSpender() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
         address spender = makeAddr("spender");
 
         vm.prank(userEOA);
@@ -194,7 +213,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_approveSpender_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
 
         vm.prank(operator);
         vm.expectRevert(UserAccount.OnlyOwner.selector);
@@ -204,7 +223,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: receive ETH ────────────────────────────────────────────
 
     function test_receiveEth() public {
-        address account = factory.createAccount(userEOA);
+        address account = factory.createAccount(userEOA, 0);
 
         vm.deal(address(this), 1 ether);
         (bool ok,) = account.call{value: 1 ether}("");
