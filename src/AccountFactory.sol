@@ -5,7 +5,8 @@ import {UserAccount} from "./UserAccount.sol";
 
 /**
  * @title AccountFactory
- * @notice Deploys one UserAccount per user using CREATE2.
+ * @notice Deploys UserAccounts per user using CREATE2.
+ *         Supports multiple accounts per user via a salt index.
  *         Emits AccountCreated so your indexer can track all accounts
  *         from a single contract address.
  *
@@ -25,8 +26,8 @@ contract AccountFactory {
     /// @notice CoW Protocol VaultRelayer address on this chain
     address public immutable cowRelayer;
 
-    /// @notice owner EOA => deployed UserAccount address
-    mapping(address => address) public accountOf;
+    /// @notice owner EOA => salt index => deployed UserAccount address
+    mapping(address => mapping(uint256 => address)) public accountOf;
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -36,7 +37,7 @@ contract AccountFactory {
      *      - owner address    (to look up a user's account)
      *      - operator address (sanity check / operator rotation tracking)
      */
-    event AccountCreated(address indexed account, address indexed owner, address indexed operator);
+    event AccountCreated(address indexed account, address indexed owner, address indexed operator, uint256 salt);
 
     // ─── Errors ──────────────────────────────────────────────────────────────
 
@@ -65,24 +66,25 @@ contract AccountFactory {
      * @notice Deploy a UserAccount for a user.
      *         Call this from your backend when a user first connects.
      *         You pay the gas — user needs nothing.
-     * @param owner  The user's EOA address
-     * @return account  The deployed UserAccount address
+     * @param owner      The user's EOA address
+     * @param saltIndex  Index to allow multiple accounts per user (0, 1, 2, ...)
+     * @return account   The deployed UserAccount address
      */
-    function createAccount(address owner) external returns (address account) {
+    function createAccount(address owner, uint256 saltIndex) external returns (address account) {
         if (owner == address(0)) revert ZeroAddress();
 
-        address existing = accountOf[owner];
+        address existing = accountOf[owner][saltIndex];
         if (existing != address(0)) revert AlreadyDeployed(existing);
 
-        // Salt is deterministic from owner address — same owner always
-        // gets the same address across any chain with this factory
-        bytes32 salt = keccak256(abi.encodePacked(owner));
+        // Salt is deterministic from owner + index — same inputs always
+        // get the same address across any chain with this factory
+        bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
         account = address(new UserAccount{salt: salt}(owner, operator, address(usdc), cowRelayer));
 
-        accountOf[owner] = account;
+        accountOf[owner][saltIndex] = account;
 
-        emit AccountCreated(account, owner, operator);
+        emit AccountCreated(account, owner, operator, saltIndex);
     }
 
     // ─── View ────────────────────────────────────────────────────────────────
@@ -91,11 +93,12 @@ contract AccountFactory {
      * @notice Predict a user's account address before deploying.
      *         Use this in your frontend — show the deposit address
      *         as soon as the user connects, before createAccount is called.
-     * @param owner  The user's EOA address
+     * @param owner      The user's EOA address
+     * @param saltIndex  Index matching the one passed to createAccount
      * @return  The address the UserAccount will be deployed to
      */
-    function predictAddress(address owner) public view returns (address) {
-        bytes32 salt = keccak256(abi.encodePacked(owner));
+    function predictAddress(address owner, uint256 saltIndex) public view returns (address) {
+        bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
         bytes32 initCodeHash =
             keccak256(abi.encodePacked(type(UserAccount).creationCode, abi.encode(owner, operator, usdc, cowRelayer)));
@@ -104,10 +107,11 @@ contract AccountFactory {
     }
 
     /**
-     * @notice Check if a user already has an account deployed.
-     * @param owner  The user's EOA address
+     * @notice Check if a user has an account deployed at a given salt index.
+     * @param owner      The user's EOA address
+     * @param saltIndex  The salt index to check
      */
-    function hasAccount(address owner) external view returns (bool) {
-        return accountOf[owner] != address(0);
+    function hasAccount(address owner, uint256 saltIndex) external view returns (bool) {
+        return accountOf[owner][saltIndex] != address(0);
     }
 }
