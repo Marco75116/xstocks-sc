@@ -10,7 +10,7 @@ contract DeployFactory is Script {
         address usdc = vm.envAddress("USDC");
         address cowRelayer = vm.envAddress("COW_RELAYER");
 
-        vm.startBroadcast();
+        vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
 
         AccountFactory factory = new AccountFactory(operator, usdc, cowRelayer);
 
