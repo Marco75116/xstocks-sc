@@ -15,6 +15,21 @@ import {UserAccount} from "./UserAccount.sol";
  *         after connecting their wallet, before paying any gas.
  */
 contract AccountFactory {
+    // ─── Types ────────────────────────────────────────────────────────────────
+
+    /// @notice Vault strategy configuration for a user account.
+    ///         Manual mode: dcaAmount = 0, dcaFrequency = 0.
+    /// @param tokens      Tokens to buy (xtock addresses)
+    /// @param allocations Allocation per token in basis points (100 = 1%, sum = 10_000)
+    /// @param dcaAmount   USDC amount per DCA execution (0 = manual)
+    /// @param dcaFrequency Seconds between DCA executions (0 = manual)
+    struct VaultConfig {
+        address[] tokens;
+        uint256[] allocations;
+        uint256 dcaAmount;
+        uint256 dcaFrequency;
+    }
+
     // ─── State ───────────────────────────────────────────────────────────────
 
     /// @notice Your backend key — shared operator across all user accounts
@@ -38,11 +53,20 @@ contract AccountFactory {
      *      - operator address (sanity check / operator rotation tracking)
      */
     event AccountCreated(address indexed account, address indexed owner, address indexed operator, uint256 salt);
+    event VaultConfigured(
+        address indexed account,
+        address indexed owner,
+        address[] tokens,
+        uint256[] allocations,
+        uint256 dcaAmount,
+        uint256 dcaFrequency
+    );
 
     // ─── Errors ──────────────────────────────────────────────────────────────
 
     error AlreadyDeployed(address existing);
     error ZeroAddress();
+    error ArrayLengthMismatch();
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 
@@ -70,8 +94,12 @@ contract AccountFactory {
      * @param saltIndex  Index to allow multiple accounts per user (0, 1, 2, ...)
      * @return account   The deployed UserAccount address
      */
-    function createAccount(address owner, uint256 saltIndex) external returns (address account) {
+    function createAccount(address owner, uint256 saltIndex, VaultConfig calldata config)
+        external
+        returns (address account)
+    {
         if (owner == address(0)) revert ZeroAddress();
+        if (config.tokens.length != config.allocations.length) revert ArrayLengthMismatch();
 
         address existing = accountOf[owner][saltIndex];
         if (existing != address(0)) revert AlreadyDeployed(existing);
@@ -85,6 +113,7 @@ contract AccountFactory {
         accountOf[owner][saltIndex] = account;
 
         emit AccountCreated(account, owner, operator, saltIndex);
+        emit VaultConfigured(account, owner, config.tokens, config.allocations, config.dcaAmount, config.dcaFrequency);
     }
 
     // ─── View ────────────────────────────────────────────────────────────────
