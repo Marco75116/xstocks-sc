@@ -134,7 +134,7 @@ contract AccountFactoryTest is Test {
         deal(usdc, account, 1000e6);
 
         vm.prank(userEOA);
-        UserAccount(payable(account)).withdraw(usdc, 500e6);
+        UserAccount(payable(account)).withdraw(usdc, 500e6, userEOA);
 
         assertEq(IERC20(usdc).balanceOf(userEOA), 500e6);
         assertEq(IERC20(usdc).balanceOf(account), 500e6);
@@ -146,7 +146,7 @@ contract AccountFactoryTest is Test {
 
         vm.prank(operator);
         vm.expectRevert(UserAccount.OnlyOwner.selector);
-        UserAccount(payable(account)).withdraw(usdc, 500e6);
+        UserAccount(payable(account)).withdraw(usdc, 500e6, operator);
     }
 
     // ─── UserAccount: withdrawEth ────────────────────────────────────────────
@@ -158,7 +158,7 @@ contract AccountFactoryTest is Test {
         uint256 balBefore = userEOA.balance;
 
         vm.prank(userEOA);
-        UserAccount(payable(account)).withdrawEth(1 ether);
+        UserAccount(payable(account)).withdrawEth(1 ether, userEOA);
 
         assertEq(userEOA.balance, balBefore + 1 ether);
     }
@@ -169,7 +169,7 @@ contract AccountFactoryTest is Test {
 
         vm.prank(operator);
         vm.expectRevert(UserAccount.OnlyOwner.selector);
-        UserAccount(payable(account)).withdrawEth(1 ether);
+        UserAccount(payable(account)).withdrawEth(1 ether, operator);
     }
 
     // ─── UserAccount: setOperator ────────────────────────────────────────────

@@ -91,26 +91,30 @@ contract UserAccount {
     // ─── Owner actions ───────────────────────────────────────────────────────
 
     /**
-     * @notice Withdraw any ERC-20 token back to the owner.
+     * @notice Withdraw any ERC-20 token to a chosen wallet.
      *         User always retains full custody — they can exit anytime.
      * @param token   Token to withdraw (USDC, xtocks RWA tokens, etc.)
      * @param amount  Amount to withdraw
+     * @param to      Destination wallet
      */
-    function withdraw(address token, uint256 amount) external {
+    function withdraw(address token, uint256 amount, address to) external {
         if (msg.sender != owner) revert OnlyOwner();
-        IERC20(token).safeTransfer(owner, amount);
-        emit Withdrawn(token, owner, amount);
+        if (to == address(0)) revert ZeroAddress();
+        IERC20(token).safeTransfer(to, amount);
+        emit Withdrawn(token, to, amount);
     }
 
     /**
      * @notice Withdraw ETH that was accidentally sent to this contract.
      * @param amount  Amount of ETH to withdraw
+     * @param to      Destination wallet
      */
-    function withdrawEth(uint256 amount) external {
+    function withdrawEth(uint256 amount, address to) external {
         if (msg.sender != owner) revert OnlyOwner();
-        (bool ok,) = owner.call{value: amount}("");
+        if (to == address(0)) revert ZeroAddress();
+        (bool ok,) = to.call{value: amount}("");
         if (!ok) revert TransferFailed();
-        emit EthWithdrawn(owner, amount);
+        emit EthWithdrawn(to, amount);
     }
 
     /**
