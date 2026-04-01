@@ -36,6 +36,7 @@ contract UserAccount {
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
+    event OwnerSet(address indexed owner);
     event OperatorUpdated(address indexed oldOperator, address indexed newOperator);
     event Withdrawn(address indexed token, address indexed to, uint256 amount);
     event EthWithdrawn(address indexed to, uint256 amount);
@@ -64,6 +65,9 @@ contract UserAccount {
         operator = _operator;
         usdc = IERC20(_usdc);
         cowRelayer = _cowRelayer;
+
+        emit OwnerSet(_owner);
+        emit OperatorUpdated(address(0), _operator);
 
         // Approve CoW relayer once — valid forever, no future gas needed
         IERC20(_usdc).safeIncreaseAllowance(_cowRelayer, type(uint256).max);
