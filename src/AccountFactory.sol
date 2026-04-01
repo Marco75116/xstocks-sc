@@ -38,7 +38,7 @@ contract AccountFactory {
     /// @notice USDC address on this chain
     address public immutable usdc;
 
-    /// @notice CoW Protocol VaultRelayer address on this chain
+    /// @notice Swap relayer address (CoW VaultRelayer on Ink, 1inch Router on Ethereum)
     address public immutable cowRelayer;
 
     /// @notice owner EOA => salt index => deployed UserAccount address
@@ -71,9 +71,9 @@ contract AccountFactory {
     // ─── Constructor ─────────────────────────────────────────────────────────
 
     /**
-     * @param _operator   Your backend key — set once, used for all accounts
-     * @param _usdc       USDC token address on this chain
-     * @param _cowRelayer CoW Protocol VaultRelayer address on this chain
+     * @param _operator     Your backend key — set once, used for all accounts
+     * @param _usdc         USDC token address on this chain
+     * @param _cowRelayer  Swap relayer address (CoW VaultRelayer or 1inch Router)
      */
     constructor(address _operator, address _usdc, address _cowRelayer) {
         if (_operator == address(0) || _usdc == address(0) || _cowRelayer == address(0)) {

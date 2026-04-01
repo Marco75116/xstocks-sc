@@ -7,7 +7,9 @@ remappings = ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [rpc_endpoints]
-ink = "${INK_RPC_URL}"
+ink = "https://rpc-gel.inkonchain.com"
+ethereum = "${ETH_RPC_URL}"
 
 [etherscan]
 ink = { key = "verifyContract", chain = 57073, url = "https://explorer.inkonchain.com/api/" }
+ethereum = { key = "${ETHERSCAN_API_KEY}", chain = 1 }

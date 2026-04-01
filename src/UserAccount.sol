@@ -9,7 +9,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @title UserAccount
  * @notice ERC-1271 smart account deployed per user.
  *         Holds USDC, allows the operator (backend) to sign
- *         CoW Protocol orders on behalf of the owner (user EOA).
+ *         swap orders on behalf of the owner (user EOA).
+ *         Works with CoW Protocol (Ink) and 1inch Fusion (Ethereum).
  */
 contract UserAccount {
     using ECDSA for bytes32;
@@ -25,13 +26,13 @@ contract UserAccount {
     /// @notice The user's EOA. Only address that can withdraw or change operator.
     address public immutable owner;
 
-    /// @notice Your backend key. Authorized to sign CoW orders for this account.
+    /// @notice Your backend key. Authorized to sign swap orders for this account.
     address public operator;
 
     /// @notice USDC token address (set at deploy time per chain)
     IERC20 public immutable usdc;
 
-    /// @notice CoW Protocol VaultRelayer address (chain-specific)
+    /// @notice Swap relayer address (CoW VaultRelayer on Ink, 1inch Router on Ethereum)
     address public immutable cowRelayer;
 
     // ─── Events ──────────────────────────────────────────────────────────────
@@ -51,10 +52,10 @@ contract UserAccount {
     // ─── Constructor ─────────────────────────────────────────────────────────
 
     /**
-     * @param _owner      User's EOA address
-     * @param _operator   Backend key authorized to sign CoW orders
-     * @param _usdc       USDC token address on this chain
-     * @param _cowRelayer CoW Protocol VaultRelayer address on this chain
+     * @param _owner        User's EOA address
+     * @param _operator     Backend key authorized to sign swap orders
+     * @param _usdc         USDC token address on this chain
+     * @param _cowRelayer  Swap relayer address (CoW VaultRelayer or 1inch Router)
      */
     constructor(address _owner, address _operator, address _usdc, address _cowRelayer) {
         if (_owner == address(0) || _operator == address(0) || _usdc == address(0) || _cowRelayer == address(0)) {
@@ -69,7 +70,7 @@ contract UserAccount {
         emit OwnerSet(_owner);
         emit OperatorUpdated(address(0), _operator);
 
-        // Approve CoW relayer once — valid forever, no future gas needed
+        // Approve swap relayer once — valid forever, no future gas needed
         IERC20(_usdc).safeIncreaseAllowance(_cowRelayer, type(uint256).max);
         emit TokenApproved(_usdc, _cowRelayer, type(uint256).max);
     }
@@ -81,9 +82,9 @@ contract UserAccount {
     // ─── ERC-1271 ────────────────────────────────────────────────────────────
 
     /**
-     * @notice Called by CoW Protocol settlement to verify order signatures.
+     * @notice Called by swap protocol settlement to verify order signatures.
      *         Returns magic value if the operator or owner signed the hash.
-     * @param hash  The CoW order hash
+     * @param hash  The order hash (CoW or 1inch)
      * @param sig   Signature produced by the operator or owner key
      */
     function isValidSignature(bytes32 hash, bytes calldata sig) external view returns (bytes4) {
