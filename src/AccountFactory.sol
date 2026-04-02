@@ -127,11 +127,7 @@ contract AccountFactory {
      * @param tokens     The xtocks token addresses (must match createAccount call)
      * @return  The address the UserAccount will be deployed to
      */
-    function predictAddress(address owner, uint256 saltIndex, address[] calldata tokens)
-        public
-        view
-        returns (address)
-    {
+    function predictAddress(address owner, uint256 saltIndex, address[] calldata tokens) public view returns (address) {
         bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
         bytes32 initCodeHash = keccak256(
