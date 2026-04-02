@@ -17,6 +17,7 @@ contract AccountFactoryTest is Test {
 
     address usdc;
     address cowRelayer;
+    address cowSettlement;
 
     address tokenA;
     address tokenB;
@@ -28,10 +29,11 @@ contract AccountFactoryTest is Test {
         // Deploy mock USDC
         usdc = address(new MockERC20());
         cowRelayer = makeAddr("cowRelayer");
+        cowSettlement = makeAddr("cowSettlement");
         tokenA = address(new MockERC20());
         tokenB = address(new MockERC20());
 
-        factory = new AccountFactory(operator, usdc, cowRelayer);
+        factory = new AccountFactory(operator, usdc, cowRelayer, cowSettlement);
     }
 
     function _defaultTokens() internal view returns (address[] memory tokens) {
@@ -40,30 +42,30 @@ contract AccountFactoryTest is Test {
         tokens[1] = tokenB;
     }
 
-    function _defaultConfig() internal view returns (AccountFactory.VaultConfig memory) {
-        address[] memory tokens = _defaultTokens();
-        uint256[] memory allocations = new uint256[](2);
-        allocations[0] = 6000;
-        allocations[1] = 4000;
-        return AccountFactory.VaultConfig(tokens, allocations, 100e6, 1 days);
+    function _createDefaultAccount() internal returns (UserAccount) {
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
+        // Fund with USDC so isValidSignature balance check passes
+        deal(usdc, account, 1000e6);
+        return UserAccount(payable(account));
     }
 
-    function _manualTokens() internal view returns (address[] memory tokens) {
-        tokens = new address[](1);
-        tokens[0] = tokenA;
-    }
-
-    function _manualConfig() internal view returns (AccountFactory.VaultConfig memory) {
-        address[] memory tokens = _manualTokens();
-        uint256[] memory allocations = new uint256[](1);
-        allocations[0] = 10_000;
-        return AccountFactory.VaultConfig(tokens, allocations, 0, 0);
+    function _defaultOrder(address receiver) internal view returns (UserAccount.GPv2Order memory) {
+        return UserAccount.GPv2Order({
+            sellToken: usdc,
+            buyToken: tokenA,
+            receiver: receiver,
+            sellAmount: 60e6,
+            buyAmount: 1e18,
+            validTo: uint32(block.timestamp + 1 hours),
+            appData: bytes32(0),
+            feeAmount: 0
+        });
     }
 
     // ─── Factory tests ───────────────────────────────────────────────────────
 
     function test_createAccount() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
 
         assertNotEq(account, address(0));
         assertEq(factory.accountOf(userEOA, 0), account);
@@ -71,57 +73,25 @@ contract AccountFactoryTest is Test {
     }
 
     function test_createAccount_emitsAccountCreated() public {
-        vm.expectEmit(true, true, true, true);
         address predicted = factory.predictAddress(userEOA, 0, _defaultTokens());
+
+        vm.expectEmit(true, true, true, true);
         emit AccountFactory.AccountCreated(predicted, userEOA, operator, 0);
 
-        factory.createAccount(userEOA, 0, _defaultConfig());
-    }
-
-    function test_createAccount_emitsVaultConfigured() public {
-        AccountFactory.VaultConfig memory config = _defaultConfig();
-        address predicted = factory.predictAddress(userEOA, 0, _defaultTokens());
-
-        vm.expectEmit(true, true, false, true);
-        emit AccountFactory.VaultConfigured(
-            predicted, userEOA, config.tokens, config.allocations, config.dcaAmount, config.dcaFrequency
-        );
-
-        factory.createAccount(userEOA, 0, config);
-    }
-
-    function test_createAccount_manualConfig() public {
-        AccountFactory.VaultConfig memory config = _manualConfig();
-        address predicted = factory.predictAddress(userEOA, 0, _manualTokens());
-
-        vm.expectEmit(true, true, false, true);
-        emit AccountFactory.VaultConfigured(predicted, userEOA, config.tokens, config.allocations, 0, 0);
-
-        factory.createAccount(userEOA, 0, config);
+        factory.createAccount(userEOA, 0, _defaultTokens());
     }
 
     function test_createAccount_revertsDuplicateSalt() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
 
         vm.expectRevert(abi.encodeWithSelector(AccountFactory.AlreadyDeployed.selector, account));
-        factory.createAccount(userEOA, 0, _defaultConfig());
-    }
-
-    function test_createAccount_revertsArrayLengthMismatch() public {
-        address[] memory tokens = new address[](2);
-        tokens[0] = tokenA;
-        tokens[1] = tokenB;
-        uint256[] memory allocations = new uint256[](1);
-        allocations[0] = 10_000;
-
-        vm.expectRevert(AccountFactory.ArrayLengthMismatch.selector);
-        factory.createAccount(userEOA, 0, AccountFactory.VaultConfig(tokens, allocations, 100e6, 1 days));
+        factory.createAccount(userEOA, 0, _defaultTokens());
     }
 
     function test_createAccount_multiplePerUser() public {
-        address account0 = factory.createAccount(userEOA, 0, _defaultConfig());
-        address account1 = factory.createAccount(userEOA, 1, _defaultConfig());
-        address account2 = factory.createAccount(userEOA, 2, _defaultConfig());
+        address account0 = factory.createAccount(userEOA, 0, _defaultTokens());
+        address account1 = factory.createAccount(userEOA, 1, _defaultTokens());
+        address account2 = factory.createAccount(userEOA, 2, _defaultTokens());
 
         assertNotEq(account0, account1);
         assertNotEq(account1, account2);
@@ -132,19 +102,19 @@ contract AccountFactoryTest is Test {
 
     function test_createAccount_revertsZeroAddress() public {
         vm.expectRevert(AccountFactory.ZeroAddress.selector);
-        factory.createAccount(address(0), 0, _defaultConfig());
+        factory.createAccount(address(0), 0, _defaultTokens());
     }
 
     function test_predictAddress_matchesActual() public {
         address predicted = factory.predictAddress(userEOA, 0, _defaultTokens());
-        address actual = factory.createAccount(userEOA, 0, _defaultConfig());
+        address actual = factory.createAccount(userEOA, 0, _defaultTokens());
 
         assertEq(predicted, actual);
     }
 
     function test_predictAddress_matchesActualWithSalt() public {
         address predicted = factory.predictAddress(userEOA, 3, _defaultTokens());
-        address actual = factory.createAccount(userEOA, 3, _defaultConfig());
+        address actual = factory.createAccount(userEOA, 3, _defaultTokens());
 
         assertEq(predicted, actual);
     }
@@ -153,48 +123,314 @@ contract AccountFactoryTest is Test {
         assertFalse(factory.hasAccount(userEOA, 0));
     }
 
-    // ─── UserAccount: ERC-1271 ───────────────────────────────────────────────
+    // ─── UserAccount: createPendingOrder ──────────────────────────────────────
 
-    function test_isValidSignature_operator() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
-        UserAccount ua = UserAccount(payable(account));
+    function test_createPendingOrder_happyPath() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
 
-        bytes32 hash = keccak256("test order");
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
+
+        assertEq(ua.pendingOrderByToken(tokenA), orderHash);
+
+        // Verify stored order params
+        (address sellToken, address buyToken, address receiver, uint256 sellAmount,,,,) = ua.storedOrders(orderHash);
+        assertEq(sellToken, usdc);
+        assertEq(buyToken, tokenA);
+        assertEq(receiver, address(ua));
+        assertEq(sellAmount, 60e6);
+    }
+
+    function test_createPendingOrder_emitsEvent() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(operator);
+        vm.expectEmit(false, true, false, true);
+        emit UserAccount.OrderCreated(bytes32(0), tokenA, 60e6);
+        ua.createPendingOrder(order);
+    }
+
+    function test_createPendingOrder_revertsNonOperator() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(userEOA);
+        vm.expectRevert(UserAccount.OnlyOperator.selector);
+        ua.createPendingOrder(order);
+    }
+
+    function test_createPendingOrder_revertsDisallowedSellToken() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+        order.sellToken = makeAddr("random"); // not USDC and not an xtoken
+
+        vm.prank(operator);
+        vm.expectRevert(UserAccount.InvalidSellToken.selector);
+        ua.createPendingOrder(order);
+    }
+
+    function test_createPendingOrder_allowsXtokenAsSellToken() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+        order.sellToken = tokenA; // liquidation: sell xtoken for USDC
+        order.buyToken = usdc;
+        order.sellAmount = 1e18;
+
+        // Fund with tokenA
+        deal(tokenA, address(ua), 10e18);
+
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
+        assertEq(ua.pendingOrderByToken(usdc), orderHash);
+    }
+
+    function test_createPendingOrder_revertsWrongReceiver() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(userEOA);
+
+        vm.prank(operator);
+        vm.expectRevert(UserAccount.InvalidReceiver.selector);
+        ua.createPendingOrder(order);
+    }
+
+    // ─── EIP-712 hash correctness ─────────────────────────────────────────────
+
+    function test_createPendingOrder_eip712HashCorrectness() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        bytes32 gpv2TypeHash = keccak256(
+            "Order(address sellToken,address buyToken,address receiver,uint256 sellAmount,uint256 buyAmount,uint32 validTo,bytes32 appData,uint256 feeAmount,string kind,bool partiallyFillable,string sellTokenBalance,string buyTokenBalance)"
+        );
+        bytes32 kindSell = keccak256("sell");
+        bytes32 balanceErc20 = keccak256("erc20");
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                gpv2TypeHash,
+                order.sellToken,
+                order.buyToken,
+                order.receiver,
+                order.sellAmount,
+                order.buyAmount,
+                order.validTo,
+                order.appData,
+                order.feeAmount,
+                kindSell,
+                false,
+                balanceErc20,
+                balanceErc20
+            )
+        );
+
+        bytes32 domainSep = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("Gnosis Protocol"),
+                keccak256("v2"),
+                block.chainid,
+                cowSettlement
+            )
+        );
+
+        bytes32 expectedHash = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
+
+        vm.prank(operator);
+        bytes32 actualHash = ua.createPendingOrder(order);
+
+        assertEq(actualHash, expectedHash);
+    }
+
+    // ─── Overwrite (one per token) ────────────────────────────────────────────
+
+    function test_createPendingOrder_overwritesPreviousForSameToken() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(operator);
+        bytes32 hash1 = ua.createPendingOrder(order);
+
+        // New order for same buyToken overwrites
+        order.sellAmount = 50e6;
+        vm.prank(operator);
+        bytes32 hash2 = ua.createPendingOrder(order);
+
+        // Old stored order is cleared
+        (address sellToken,,,,,,,) = ua.storedOrders(hash1);
+        assertEq(sellToken, address(0));
+
+        // New stored order exists
+        (sellToken,,,,,,,) = ua.storedOrders(hash2);
+        assertEq(sellToken, usdc);
+        assertEq(ua.pendingOrderByToken(tokenA), hash2);
+    }
+
+    function test_createPendingOrder_differentTokensIndependent() public {
+        UserAccount ua = _createDefaultAccount();
+
+        UserAccount.GPv2Order memory orderA = _defaultOrder(address(ua));
+        vm.prank(operator);
+        bytes32 hashA = ua.createPendingOrder(orderA);
+
+        UserAccount.GPv2Order memory orderB = _defaultOrder(address(ua));
+        orderB.buyToken = tokenB;
+        vm.prank(operator);
+        bytes32 hashB = ua.createPendingOrder(orderB);
+
+        // Both stored
+        (address sellTokenA,,,,,,,) = ua.storedOrders(hashA);
+        (address sellTokenB,,,,,,,) = ua.storedOrders(hashB);
+        assertEq(sellTokenA, usdc);
+        assertEq(sellTokenB, usdc);
+        assertEq(ua.pendingOrderByToken(tokenA), hashA);
+        assertEq(ua.pendingOrderByToken(tokenB), hashB);
+    }
+
+    // ─── isValidSignature ─────────────────────────────────────────────────────
+
+    function test_isValidSignature_operatorWithPendingOrder() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, orderHash);
+        assertEq(ua.isValidSignature(orderHash, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
+    }
+
+    function test_isValidSignature_ownerWithPendingOrder() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userKey, orderHash);
+        assertEq(ua.isValidSignature(orderHash, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
+    }
+
+    function test_isValidSignature_invalidWithoutPendingOrder() public {
+        UserAccount ua = _createDefaultAccount();
+
+        bytes32 hash = keccak256("random order");
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, hash);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        assertEq(ua.isValidSignature(hash, sig), bytes4(0x1626ba7e));
+        assertEq(ua.isValidSignature(hash, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
     }
 
-    function test_isValidSignature_owner() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
-        UserAccount ua = UserAccount(payable(account));
+    function test_isValidSignature_invalidSignerWithPendingOrder() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
 
-        bytes32 hash = keccak256("test order");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userKey, hash);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        assertEq(ua.isValidSignature(hash, sig), bytes4(0x1626ba7e));
-    }
-
-    function test_isValidSignature_invalidSigner() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
-        UserAccount ua = UserAccount(payable(account));
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
 
         (, uint256 randomKey) = makeAddrAndKey("random");
-        bytes32 hash = keccak256("test order");
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(randomKey, hash);
-        bytes memory sig = abi.encodePacked(r, s, v);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(randomKey, orderHash);
+        assertEq(ua.isValidSignature(orderHash, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
+    }
 
-        assertEq(ua.isValidSignature(hash, sig), bytes4(0xffffffff));
+    function test_isValidSignature_invalidBuyTokenNotAllowed() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+        order.buyToken = makeAddr("disallowed"); // not in _xtokens
+
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, orderHash);
+        assertEq(ua.isValidSignature(orderHash, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
+    }
+
+    function test_isValidSignature_allowedTokensSetCorrectly() public {
+        UserAccount ua = _createDefaultAccount();
+
+        assertTrue(ua.allowedTokens(tokenA));
+        assertTrue(ua.allowedTokens(tokenB));
+        assertFalse(ua.allowedTokens(makeAddr("random")));
+        assertFalse(ua.allowedTokens(usdc)); // USDC itself is not an xtoken
+    }
+
+    function test_isValidSignature_liquidationOrder() public {
+        UserAccount ua = _createDefaultAccount();
+
+        // Liquidation: sell tokenA for USDC
+        UserAccount.GPv2Order memory order = UserAccount.GPv2Order({
+            sellToken: tokenA,
+            buyToken: usdc,
+            receiver: address(ua),
+            sellAmount: 1e18,
+            buyAmount: 1,
+            validTo: uint32(block.timestamp + 1 hours),
+            appData: bytes32(0),
+            feeAmount: 0
+        });
+
+        // Fund with tokenA
+        deal(tokenA, address(ua), 10e18);
+
+        vm.prank(operator);
+        bytes32 orderHash = ua.createPendingOrder(order);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, orderHash);
+        assertEq(ua.isValidSignature(orderHash, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
+    }
+
+    function test_isValidSignature_invalidAfterOverwrite() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(operator);
+        bytes32 oldHash = ua.createPendingOrder(order);
+
+        // Overwrite with new order for same token
+        order.sellAmount = 50e6;
+        vm.prank(operator);
+        bytes32 newHash = ua.createPendingOrder(order);
+
+        // Old order is invalid (stored order cleared)
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, oldHash);
+        assertEq(ua.isValidSignature(oldHash, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
+
+        // New order is valid
+        (v, r, s) = vm.sign(operatorKey, newHash);
+        assertEq(ua.isValidSignature(newHash, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
+    }
+
+    // ─── Full integration ─────────────────────────────────────────────────────
+
+    function test_fullIntegration_createSignOverwrite() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(operator);
+        bytes32 hash1 = ua.createPendingOrder(order);
+
+        // Verify isValidSignature works
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, hash1);
+        assertEq(ua.isValidSignature(hash1, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
+
+        // Overwrite with new order
+        order.sellAmount = 50e6;
+        vm.prank(operator);
+        bytes32 hash2 = ua.createPendingOrder(order);
+
+        assertNotEq(hash1, hash2);
+
+        // Old invalid, new valid
+        (v, r, s) = vm.sign(operatorKey, hash1);
+        assertEq(ua.isValidSignature(hash1, abi.encodePacked(r, s, v)), bytes4(0xffffffff));
+
+        (v, r, s) = vm.sign(operatorKey, hash2);
+        assertEq(ua.isValidSignature(hash2, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
     }
 
     // ─── UserAccount: withdraw ───────────────────────────────────────────────
 
     function test_withdraw() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
-
-        // Fund the account with mock USDC
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
         deal(usdc, account, 1000e6);
 
         vm.prank(userEOA);
@@ -205,7 +441,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_withdraw_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
         deal(usdc, account, 1000e6);
 
         vm.prank(operator);
@@ -216,7 +452,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: withdrawEth ────────────────────────────────────────────
 
     function test_withdrawEth() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
         vm.deal(account, 1 ether);
 
         uint256 balBefore = userEOA.balance;
@@ -228,7 +464,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_withdrawEth_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
         vm.deal(account, 1 ether);
 
         vm.prank(operator);
@@ -239,7 +475,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: setOperator ────────────────────────────────────────────
 
     function test_setOperator() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
         address newOp = makeAddr("newOperator");
 
         vm.prank(userEOA);
@@ -249,7 +485,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_setOperator_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
 
         vm.prank(operator);
         vm.expectRevert(UserAccount.OnlyOwner.selector);
@@ -257,7 +493,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_setOperator_revertsZeroAddress() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
 
         vm.prank(userEOA);
         vm.expectRevert(UserAccount.ZeroAddress.selector);
@@ -267,7 +503,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: approveSpender ─────────────────────────────────────────
 
     function test_approveSpender() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
         address spender = makeAddr("spender");
 
         vm.prank(userEOA);
@@ -277,7 +513,7 @@ contract AccountFactoryTest is Test {
     }
 
     function test_approveSpender_revertsNonOwner() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
 
         vm.prank(operator);
         vm.expectRevert(UserAccount.OnlyOwner.selector);
@@ -287,7 +523,7 @@ contract AccountFactoryTest is Test {
     // ─── UserAccount: receive ETH ────────────────────────────────────────────
 
     function test_receiveEth() public {
-        address account = factory.createAccount(userEOA, 0, _defaultConfig());
+        address account = factory.createAccount(userEOA, 0, _defaultTokens());
 
         vm.deal(address(this), 1 ether);
         (bool ok,) = account.call{value: 1 ether}("");
