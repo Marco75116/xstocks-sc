@@ -72,6 +72,12 @@ contract UserAccount {
     /// @notice Stored order params for validation at settlement time
     mapping(bytes32 => GPv2Order) public storedOrders;
 
+    /// @notice Timestamp of the last order creation per buy token (for DCA enforcement)
+    mapping(address => uint256) public lastPurchaseTimestamp;
+
+    /// @notice Minimum seconds between orders for the same buy token (0 = no restriction)
+    uint256 public dcaInterval;
+
     // ─── Events ──────────────────────────────────────────────────────────────
 
     event OwnerSet(address indexed owner);
@@ -80,6 +86,7 @@ contract UserAccount {
     event EthWithdrawn(address indexed to, uint256 amount);
     event TokenApproved(address indexed token, address indexed spender, uint256 amount);
     event OrderCreated(bytes32 indexed orderHash, address indexed buyToken, uint256 sellAmount);
+    event DcaIntervalUpdated(uint256 oldInterval, uint256 newInterval);
 
     // ─── Errors ──────────────────────────────────────────────────────────────
 
@@ -89,6 +96,7 @@ contract UserAccount {
     error TransferFailed();
     error InvalidSellToken();
     error InvalidReceiver();
+    error DcaTooSoon();
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 
@@ -163,6 +171,10 @@ contract UserAccount {
         if (msg.sender != operator) revert OnlyOperator();
         if (order.sellToken != address(usdc) && !allowedTokens[order.sellToken]) revert InvalidSellToken();
         if (order.receiver != address(this)) revert InvalidReceiver();
+        uint256 lastTs = lastPurchaseTimestamp[order.buyToken];
+        if (dcaInterval > 0 && lastTs > 0 && block.timestamp < lastTs + dcaInterval) {
+            revert DcaTooSoon();
+        }
 
         orderHash = _hashOrder(order);
 
@@ -174,6 +186,7 @@ contract UserAccount {
 
         pendingOrderByToken[order.buyToken] = orderHash;
         storedOrders[orderHash] = order;
+        lastPurchaseTimestamp[order.buyToken] = block.timestamp;
 
         emit OrderCreated(orderHash, order.buyToken, order.sellAmount);
     }
@@ -229,6 +242,16 @@ contract UserAccount {
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert TransferFailed();
         emit EthWithdrawn(to, amount);
+    }
+
+    /**
+     * @notice Set the minimum interval between orders for the same buy token (DCA enforcement).
+     * @param newInterval  Minimum seconds between orders (0 = no restriction)
+     */
+    function setDcaInterval(uint256 newInterval) external {
+        if (msg.sender != owner) revert OnlyOwner();
+        emit DcaIntervalUpdated(dcaInterval, newInterval);
+        dcaInterval = newInterval;
     }
 
     /**
