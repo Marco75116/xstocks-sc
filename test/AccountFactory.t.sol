@@ -28,25 +28,33 @@ contract AccountFactoryTest is Test {
         // Deploy mock USDC
         usdc = address(new MockERC20());
         cowRelayer = makeAddr("cowRelayer");
-        tokenA = makeAddr("tokenA");
-        tokenB = makeAddr("tokenB");
+        tokenA = address(new MockERC20());
+        tokenB = address(new MockERC20());
 
         factory = new AccountFactory(operator, usdc, cowRelayer);
     }
 
-    function _defaultConfig() internal view returns (AccountFactory.VaultConfig memory) {
-        address[] memory tokens = new address[](2);
+    function _defaultTokens() internal view returns (address[] memory tokens) {
+        tokens = new address[](2);
         tokens[0] = tokenA;
         tokens[1] = tokenB;
+    }
+
+    function _defaultConfig() internal view returns (AccountFactory.VaultConfig memory) {
+        address[] memory tokens = _defaultTokens();
         uint256[] memory allocations = new uint256[](2);
         allocations[0] = 6000;
         allocations[1] = 4000;
         return AccountFactory.VaultConfig(tokens, allocations, 100e6, 1 days);
     }
 
-    function _manualConfig() internal view returns (AccountFactory.VaultConfig memory) {
-        address[] memory tokens = new address[](1);
+    function _manualTokens() internal view returns (address[] memory tokens) {
+        tokens = new address[](1);
         tokens[0] = tokenA;
+    }
+
+    function _manualConfig() internal view returns (AccountFactory.VaultConfig memory) {
+        address[] memory tokens = _manualTokens();
         uint256[] memory allocations = new uint256[](1);
         allocations[0] = 10_000;
         return AccountFactory.VaultConfig(tokens, allocations, 0, 0);
@@ -64,7 +72,7 @@ contract AccountFactoryTest is Test {
 
     function test_createAccount_emitsAccountCreated() public {
         vm.expectEmit(true, true, true, true);
-        address predicted = factory.predictAddress(userEOA, 0);
+        address predicted = factory.predictAddress(userEOA, 0, _defaultTokens());
         emit AccountFactory.AccountCreated(predicted, userEOA, operator, 0);
 
         factory.createAccount(userEOA, 0, _defaultConfig());
@@ -72,7 +80,7 @@ contract AccountFactoryTest is Test {
 
     function test_createAccount_emitsVaultConfigured() public {
         AccountFactory.VaultConfig memory config = _defaultConfig();
-        address predicted = factory.predictAddress(userEOA, 0);
+        address predicted = factory.predictAddress(userEOA, 0, _defaultTokens());
 
         vm.expectEmit(true, true, false, true);
         emit AccountFactory.VaultConfigured(
@@ -84,7 +92,7 @@ contract AccountFactoryTest is Test {
 
     function test_createAccount_manualConfig() public {
         AccountFactory.VaultConfig memory config = _manualConfig();
-        address predicted = factory.predictAddress(userEOA, 0);
+        address predicted = factory.predictAddress(userEOA, 0, _manualTokens());
 
         vm.expectEmit(true, true, false, true);
         emit AccountFactory.VaultConfigured(predicted, userEOA, config.tokens, config.allocations, 0, 0);
@@ -128,14 +136,14 @@ contract AccountFactoryTest is Test {
     }
 
     function test_predictAddress_matchesActual() public {
-        address predicted = factory.predictAddress(userEOA, 0);
+        address predicted = factory.predictAddress(userEOA, 0, _defaultTokens());
         address actual = factory.createAccount(userEOA, 0, _defaultConfig());
 
         assertEq(predicted, actual);
     }
 
     function test_predictAddress_matchesActualWithSalt() public {
-        address predicted = factory.predictAddress(userEOA, 3);
+        address predicted = factory.predictAddress(userEOA, 3, _defaultTokens());
         address actual = factory.createAccount(userEOA, 3, _defaultConfig());
 
         assertEq(predicted, actual);

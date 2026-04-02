@@ -108,7 +108,7 @@ contract AccountFactory {
         // get the same address across any chain with this factory
         bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
-        account = address(new UserAccount{salt: salt}(owner, operator, address(usdc), cowRelayer));
+        account = address(new UserAccount{salt: salt}(owner, operator, address(usdc), cowRelayer, config.tokens));
 
         accountOf[owner][saltIndex] = account;
 
@@ -124,13 +124,15 @@ contract AccountFactory {
      *         as soon as the user connects, before createAccount is called.
      * @param owner      The user's EOA address
      * @param saltIndex  Index matching the one passed to createAccount
+     * @param tokens     The xtocks token addresses (must match createAccount call)
      * @return  The address the UserAccount will be deployed to
      */
-    function predictAddress(address owner, uint256 saltIndex) public view returns (address) {
+    function predictAddress(address owner, uint256 saltIndex, address[] calldata tokens) public view returns (address) {
         bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
-        bytes32 initCodeHash =
-            keccak256(abi.encodePacked(type(UserAccount).creationCode, abi.encode(owner, operator, usdc, cowRelayer)));
+        bytes32 initCodeHash = keccak256(
+            abi.encodePacked(type(UserAccount).creationCode, abi.encode(owner, operator, usdc, cowRelayer, tokens))
+        );
 
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)))));
     }
