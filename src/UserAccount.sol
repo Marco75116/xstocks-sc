@@ -56,8 +56,9 @@ contract UserAccount {
      * @param _operator     Backend key authorized to sign swap orders
      * @param _usdc         USDC token address on this chain
      * @param _cowRelayer  Swap relayer address (CoW VaultRelayer or 1inch Router)
+     * @param _xtokens      Xtocks token addresses to approve for selling via swap relayer
      */
-    constructor(address _owner, address _operator, address _usdc, address _cowRelayer) {
+    constructor(address _owner, address _operator, address _usdc, address _cowRelayer, address[] memory _xtokens) {
         if (_owner == address(0) || _operator == address(0) || _usdc == address(0) || _cowRelayer == address(0)) {
             revert ZeroAddress();
         }
@@ -70,9 +71,15 @@ contract UserAccount {
         emit OwnerSet(_owner);
         emit OperatorUpdated(address(0), _operator);
 
-        // Approve swap relayer once — valid forever, no future gas needed
+        // Approve swap relayer for USDC (buying) — valid forever, no future gas needed
         IERC20(_usdc).safeIncreaseAllowance(_cowRelayer, type(uint256).max);
         emit TokenApproved(_usdc, _cowRelayer, type(uint256).max);
+
+        // Approve swap relayer for each xtocks token (selling/liquidating)
+        for (uint256 i = 0; i < _xtokens.length; i++) {
+            IERC20(_xtokens[i]).safeIncreaseAllowance(_cowRelayer, type(uint256).max);
+            emit TokenApproved(_xtokens[i], _cowRelayer, type(uint256).max);
+        }
     }
 
     // ─── Receive ETH ─────────────────────────────────────────────────────────
