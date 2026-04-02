@@ -15,21 +15,6 @@ import {UserAccount} from "./UserAccount.sol";
  *         after connecting their wallet, before paying any gas.
  */
 contract AccountFactory {
-    // ─── Types ────────────────────────────────────────────────────────────────
-
-    /// @notice Vault strategy configuration for a user account.
-    ///         Manual mode: dcaAmount = 0, dcaFrequency = 0.
-    /// @param tokens      Tokens to buy (xtock addresses)
-    /// @param allocations Allocation per token in basis points (100 = 1%, sum = 10_000)
-    /// @param dcaAmount   USDC amount per DCA execution (0 = manual)
-    /// @param dcaFrequency Seconds between DCA executions (0 = manual)
-    struct VaultConfig {
-        address[] tokens;
-        uint256[] allocations;
-        uint256 dcaAmount;
-        uint256 dcaFrequency;
-    }
-
     // ─── State ───────────────────────────────────────────────────────────────
 
     /// @notice Your backend key — shared operator across all user accounts
@@ -40,6 +25,9 @@ contract AccountFactory {
 
     /// @notice Swap relayer address (CoW VaultRelayer on Ink, 1inch Router on Ethereum)
     address public immutable cowRelayer;
+
+    /// @notice CoW Protocol settlement contract address
+    address public immutable cowSettlement;
 
     /// @notice owner EOA => salt index => deployed UserAccount address
     mapping(address => mapping(uint256 => address)) public accountOf;
@@ -53,35 +41,29 @@ contract AccountFactory {
      *      - operator address (sanity check / operator rotation tracking)
      */
     event AccountCreated(address indexed account, address indexed owner, address indexed operator, uint256 salt);
-    event VaultConfigured(
-        address indexed account,
-        address indexed owner,
-        address[] tokens,
-        uint256[] allocations,
-        uint256 dcaAmount,
-        uint256 dcaFrequency
-    );
 
     // ─── Errors ──────────────────────────────────────────────────────────────
 
     error AlreadyDeployed(address existing);
     error ZeroAddress();
-    error ArrayLengthMismatch();
 
     // ─── Constructor ─────────────────────────────────────────────────────────
 
     /**
-     * @param _operator     Your backend key — set once, used for all accounts
-     * @param _usdc         USDC token address on this chain
-     * @param _cowRelayer  Swap relayer address (CoW VaultRelayer or 1inch Router)
+     * @param _operator       Your backend key — set once, used for all accounts
+     * @param _usdc           USDC token address on this chain
+     * @param _cowRelayer     Swap relayer address (CoW VaultRelayer or 1inch Router)
+     * @param _cowSettlement  CoW Protocol settlement contract address
      */
-    constructor(address _operator, address _usdc, address _cowRelayer) {
-        if (_operator == address(0) || _usdc == address(0) || _cowRelayer == address(0)) {
+    constructor(address _operator, address _usdc, address _cowRelayer, address _cowSettlement) {
+        if (_operator == address(0) || _usdc == address(0) || _cowRelayer == address(0) || _cowSettlement == address(0))
+        {
             revert ZeroAddress();
         }
         operator = _operator;
         usdc = _usdc;
         cowRelayer = _cowRelayer;
+        cowSettlement = _cowSettlement;
     }
 
     // ─── Core ────────────────────────────────────────────────────────────────
@@ -92,28 +74,26 @@ contract AccountFactory {
      *         You pay the gas — user needs nothing.
      * @param owner      The user's EOA address
      * @param saltIndex  Index to allow multiple accounts per user (0, 1, 2, ...)
+     * @param tokens     Xtocks token addresses to approve for the swap relayer
      * @return account   The deployed UserAccount address
      */
-    function createAccount(address owner, uint256 saltIndex, VaultConfig calldata config)
+    function createAccount(address owner, uint256 saltIndex, address[] calldata tokens)
         external
         returns (address account)
     {
         if (owner == address(0)) revert ZeroAddress();
-        if (config.tokens.length != config.allocations.length) revert ArrayLengthMismatch();
 
         address existing = accountOf[owner][saltIndex];
         if (existing != address(0)) revert AlreadyDeployed(existing);
 
-        // Salt is deterministic from owner + index — same inputs always
-        // get the same address across any chain with this factory
         bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
-        account = address(new UserAccount{salt: salt}(owner, operator, address(usdc), cowRelayer, config.tokens));
+        account =
+            address(new UserAccount{salt: salt}(owner, operator, address(usdc), cowRelayer, cowSettlement, tokens));
 
         accountOf[owner][saltIndex] = account;
 
         emit AccountCreated(account, owner, operator, saltIndex);
-        emit VaultConfigured(account, owner, config.tokens, config.allocations, config.dcaAmount, config.dcaFrequency);
     }
 
     // ─── View ────────────────────────────────────────────────────────────────
@@ -127,11 +107,17 @@ contract AccountFactory {
      * @param tokens     The xtocks token addresses (must match createAccount call)
      * @return  The address the UserAccount will be deployed to
      */
-    function predictAddress(address owner, uint256 saltIndex, address[] calldata tokens) public view returns (address) {
+    function predictAddress(address owner, uint256 saltIndex, address[] calldata tokens)
+        public
+        view
+        returns (address)
+    {
         bytes32 salt = keccak256(abi.encodePacked(owner, saltIndex));
 
         bytes32 initCodeHash = keccak256(
-            abi.encodePacked(type(UserAccount).creationCode, abi.encode(owner, operator, usdc, cowRelayer, tokens))
+            abi.encodePacked(
+                type(UserAccount).creationCode, abi.encode(owner, operator, usdc, cowRelayer, cowSettlement, tokens)
+            )
         );
 
         return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)))));
