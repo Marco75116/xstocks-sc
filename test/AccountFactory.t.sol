@@ -427,6 +427,119 @@ contract AccountFactoryTest is Test {
         assertEq(ua.isValidSignature(hash2, abi.encodePacked(r, s, v)), bytes4(0x1626ba7e));
     }
 
+    // ─── DCA interval ──────────────────────────────────────────────────────────
+
+    function test_setDcaInterval() public {
+        UserAccount ua = _createDefaultAccount();
+
+        vm.prank(userEOA);
+        ua.setDcaInterval(1 days);
+
+        assertEq(ua.dcaInterval(), 1 days);
+    }
+
+    function test_setDcaInterval_revertsNonOwner() public {
+        UserAccount ua = _createDefaultAccount();
+
+        vm.prank(operator);
+        vm.expectRevert(UserAccount.OnlyOwner.selector);
+        ua.setDcaInterval(1 days);
+    }
+
+    function test_setDcaInterval_emitsEvent() public {
+        UserAccount ua = _createDefaultAccount();
+
+        vm.prank(userEOA);
+        vm.expectEmit(false, false, false, true);
+        emit UserAccount.DcaIntervalUpdated(0, 1 days);
+        ua.setDcaInterval(1 days);
+    }
+
+    function test_createPendingOrder_revertsDcaTooSoon() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        // Owner sets DCA interval to 1 day
+        vm.prank(userEOA);
+        ua.setDcaInterval(1 days);
+
+        // First order succeeds
+        vm.prank(operator);
+        ua.createPendingOrder(order);
+
+        // Second order for same buyToken within interval reverts
+        order.sellAmount = 50e6;
+        vm.prank(operator);
+        vm.expectRevert(UserAccount.DcaTooSoon.selector);
+        ua.createPendingOrder(order);
+    }
+
+    function test_createPendingOrder_succeedsAfterDcaInterval() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        vm.prank(userEOA);
+        ua.setDcaInterval(1 days);
+
+        // First order
+        vm.prank(operator);
+        ua.createPendingOrder(order);
+
+        // Warp past DCA interval
+        vm.warp(block.timestamp + 1 days);
+
+        // Second order succeeds
+        order.sellAmount = 50e6;
+        vm.prank(operator);
+        ua.createPendingOrder(order);
+    }
+
+    function test_createPendingOrder_dcaPerToken() public {
+        UserAccount ua = _createDefaultAccount();
+
+        vm.prank(userEOA);
+        ua.setDcaInterval(1 days);
+
+        // Order for tokenA
+        UserAccount.GPv2Order memory orderA = _defaultOrder(address(ua));
+        vm.prank(operator);
+        ua.createPendingOrder(orderA);
+
+        // Order for tokenB should succeed (different buy token)
+        UserAccount.GPv2Order memory orderB = _defaultOrder(address(ua));
+        orderB.buyToken = tokenB;
+        vm.prank(operator);
+        ua.createPendingOrder(orderB);
+    }
+
+    function test_createPendingOrder_noDcaRestrictionWhenZero() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        // dcaInterval is 0 by default — no restriction
+        assertEq(ua.dcaInterval(), 0);
+
+        vm.prank(operator);
+        ua.createPendingOrder(order);
+
+        // Immediately create another — should work
+        order.sellAmount = 50e6;
+        vm.prank(operator);
+        ua.createPendingOrder(order);
+    }
+
+    function test_lastPurchaseTimestamp_updatedOnOrder() public {
+        UserAccount ua = _createDefaultAccount();
+        UserAccount.GPv2Order memory order = _defaultOrder(address(ua));
+
+        uint256 ts = block.timestamp;
+
+        vm.prank(operator);
+        ua.createPendingOrder(order);
+
+        assertEq(ua.lastPurchaseTimestamp(tokenA), ts);
+    }
+
     // ─── UserAccount: withdraw ───────────────────────────────────────────────
 
     function test_withdraw() public {
